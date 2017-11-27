@@ -68,17 +68,11 @@ def AddImageInput(model, reader, batch_size, img_size, dtype, is_test):
     '''
     data, label = brew.image_input(
         model,
-        reader, ["data", "label"],
+        reader,
+        ["data", "label"],
         batch_size=batch_size,
-        output_type=dtype,
-        use_gpu_transform=True if model._device_type == 1 else False,
-        use_caffe_datum=True,
-        mean=128.,
-        std=128.,
         scale=256,
-        crop=img_size,
-        mirror=1,
-        is_test=is_test,
+        crop=224,
     )
 
     data = model.StopGradient(data, data)
@@ -181,13 +175,25 @@ def RunEpoch(
     # TODO: add loading from checkpoint
     log.info("Starting epoch {}/{}".format(epoch, args.num_epochs))
     epoch_iters = int(args.epoch_size / total_batch_size / num_shards)
-    for i in range(epoch_iters):
+    
+    
+    
+    for _ in range(num_epochs):
+        for _ in range(epoch_size / batch_size):
+            workspace.RunNet(train_model.net.Proto().name)
+            print("Loss: {}".format(workspace.FetchBlob(train_loss))
+
+        # Evaluate model quality
+        for _ in range(epoch_size / batch_size):
+            workspace.RunNet(test_model.net.Proto().name)
+            print("Loss: {}".format(workspace.FetchBlob(loss))
+              
+           
         # This timeout is required (temporarily) since CUDA-NCCL
         # operators might deadlock when synchronizing between GPUs.
         timeout = 600.0 if i == 0 else 60.0
         with timeout_guard.CompleteInTimeOrDie(timeout):
             t1 = time.time()
-            workspace.RunNet(train_model.net.Proto().name)
             t2 = time.time()
             dt = t2 - t1
 
@@ -265,14 +271,14 @@ def Train(args):
     log.info("Using epoch size: {}".format(args.epoch_size))
 
     # Create ModelHelper object
-    train_arg_scope = {
+    model_arg_scope = {
         'order': 'NCHW',
-        'use_cudnn': True,
-        'cudnn_exhaustive_search': True,
-        'ws_nbytes_limit': (args.cudnn_workspace_limit_mb * 1024 * 1024),
     }
-    train_model = model_helper.ModelHelper(
-        name="resnet50", arg_scope=train_arg_scope
+    model = model_helper.ModelHelper(
+        name="resnet50",
+        arg_scope={
+            'order': 'NCHW',
+        }
     )
 
     num_shards = args.num_shards
@@ -343,13 +349,11 @@ def Train(args):
                             BiasInitializer=initializer,
                             enable_tensor_core=args.enable_tensor_core,
                             float16_compute=args.float16_compute):
-            pred = resnet.create_resnet50(
+            softmax, loss = resnet.create_resnet50(
                 model,
                 "data",
-                num_input_channels=args.num_channels,
-                num_labels=args.num_labels,
-                no_bias=True,
-                no_loss=True,
+                label="label",
+                num_labels=1000,
             )
 
         if args.dtype == 'float16':
@@ -361,6 +365,16 @@ def Train(args):
         brew.accuracy(model, [softmax, "label"], "accuracy")
         return [loss]
 
+    model.add_gradient_operators([loss])
+    
+    optimizer.build_sgd(
+        model,
+        0.01,  # Learning rate
+        momentum=0.9,  # Momentum SGD
+    )
+    
+    
+        
     def add_optimizer(model):
         stepsz = int(30 * args.epoch_size / total_batch_size / num_shards)
 
