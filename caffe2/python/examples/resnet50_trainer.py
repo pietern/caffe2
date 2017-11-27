@@ -178,15 +178,21 @@ def RunEpoch(
     
     
     
-    for _ in range(num_epochs):
-        for _ in range(epoch_size / batch_size):
+    for epoch in range(num_epochs):
+        # Train single epoch
+        for _ in range(train_epoch_size / batch_size):
             workspace.RunNet(train_model.net.Proto().name)
-            print("Loss: {}".format(workspace.FetchBlob(train_loss))
 
         # Evaluate model quality
-        for _ in range(epoch_size / batch_size):
+        test_accuracy = 0.0
+        num_test_iters = test_epoch_size / batch_size
+        for _ in range(num_test_iters):
             workspace.RunNet(test_model.net.Proto().name)
-            print("Loss: {}".format(workspace.FetchBlob(loss))
+            test_accuracy += workspace.FetchBlob(test_accuracy)
+        test_accuracy /= num_test_iters
+
+        print("Accuracy after epoch {}: {}".format(epoch, test_accuracy))
+
               
            
         # This timeout is required (temporarily) since CUDA-NCCL
@@ -441,21 +447,33 @@ def Train(args):
                 model.param_init_net.HalfToFloat(
                     param_info.blob,
                     param_info.blob_copy[core.DataType.FLOAT]
-                )
+            )
 
-    # Create parallelized model
+    rendezvous = dict(
+        kv_handler=store_handler,
+        shard_id=0,
+        num_shards=4,
+        transport="tcp",
+    )
+
     data_parallel_model.Parallelize(
         train_model,
         input_builder_fun=add_image_input,
         forward_pass_builder_fun=create_resnet50_model_ops,
         optimizer_builder_fun=add_optimizer,
-        post_sync_builder_fun=add_post_sync_ops,
         devices=gpus,
         rendezvous=rendezvous,
-        optimize_gradient_memory=True,
+    )
+    
+    
+    
+    
+
+
+
+            optimize_gradient_memory=True,
         cpu_device=args.use_cpu,
         shared_model=args.use_cpu,
-    )
 
     workspace.RunNetOnce(train_model.param_init_net)
     workspace.CreateNet(train_model.net)
